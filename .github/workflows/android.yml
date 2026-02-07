@@ -1,0 +1,177 @@
+name: Build Native V34
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { java-version: '17', distribution: 'zulu' }
+      - name: Create Native Project
+        run: |
+          mkdir -p app/src/main/java/com/bt/chat
+          mkdir -p app/src/main/res/values
+          
+          # Root Settings
+          echo "rootProject.name='BTCHAT'" > settings.gradle
+          echo "include ':app'" >> settings.gradle
+          
+          # Root Build.gradle (Format moderne plugins)
+          cat <<EOF > build.gradle
+          buildscript {
+              repositories { google(); mavenCentral() }
+              dependencies { classpath 'com.android.tools.build:gradle:8.2.2' }
+          }
+          allprojects {
+              repositories { google(); mavenCentral() }
+          }
+          EOF
+
+          # App Build.gradle (Format moderne)
+          cat <<EOF > app/build.gradle
+          plugins { id 'com.android.application' }
+          android {
+              namespace 'com.bt.chat'
+              compileSdk 34
+              defaultConfig {
+                  applicationId "com.bt.chat"
+                  minSdk 21
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          dependencies {
+              implementation 'androidx.appcompat:appcompat:1.6.1'
+          }
+          EOF
+
+          # Manifest Android 16 Compliant
+          cat <<EOF > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+              <application android:label="BT Native Pro" android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          # Java Code (Cœur de l'application)
+          cat <<EOF > app/src/main/java/com/bt/chat/MainActivity.java
+          package com.bt.chat;
+          import android.app.Activity;
+          import android.bluetooth.*;
+          import android.os.*;
+          import android.widget.*;
+          import java.util.*;
+          import java.io.*;
+
+          public class MainActivity extends Activity {
+              private static final UUID MY_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+              private BluetoothAdapter adapter;
+              private BluetoothSocket socket;
+              private TextView logView;
+              private EditText input;
+
+              @Override
+              protected void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  LinearLayout l = new LinearLayout(this);
+                  l.setOrientation(LinearLayout.VERTICAL);
+                  l.setPadding(40,40,40,40);
+                  logView = new TextView(this);
+                  logView.setText("V34 NATIVE ENGINE\n");
+                  l.addView(logView);
+                  Button btn = new Button(this);
+                  btn.setText("LIER LES SMARTPHONES");
+                  btn.setOnClickListener(v -> connectBonded());
+                  l.addView(btn);
+                  input = new EditText(this);
+                  l.addView(input);
+                  Button send = new Button(this);
+                  send.setText("ENVOYER");
+                  send.setOnClickListener(v -> sendMessage());
+                  l.addView(send);
+                  setContentView(l);
+                  adapter = BluetoothAdapter.getDefaultAdapter();
+                  if(Build.VERSION.SDK_INT >= 31) {
+                      requestPermissions(new String[]{"android.permission.BLUETOOTH_SCAN","android.permission.BLUETOOTH_CONNECT","android.permission.ACCESS_FINE_LOCATION"}, 1);
+                  }
+                  startServer();
+              }
+
+              private void startServer() {
+                  new Thread(() -> {
+                      try {
+                          BluetoothServerSocket ss = adapter.listenUsingInsecureRfcommWithServiceRecord("BTCHAT", MY_UUID);
+                          socket = ss.accept();
+                          manage();
+                      } catch (Exception e) {}
+                  }).start();
+              }
+
+              private void connectBonded() {
+                  Set<BluetoothDevice> paired = adapter.getBondedDevices();
+                  for(BluetoothDevice d : paired) {
+                      new Thread(() -> {
+                          try {
+                              socket = d.createInsecureRfcommSocketToServiceRecord(MY_UUID);
+                              socket.connect();
+                              manage();
+                          } catch (Exception e) {}
+                      }).start();
+                  }
+              }
+
+              private void manage() {
+                  runOnUiThread(() -> logView.append("CONNECTÉ !\n"));
+                  try {
+                      InputStream is = socket.getInputStream();
+                      byte[] buf = new byte[1024];
+                      while(true) {
+                          int len = is.read(buf);
+                          if(len > 0) {
+                              String m = new String(buf, 0, len);
+                              runOnUiThread(() -> logView.append("Ami: " + m + "\n"));
+                          }
+                      }
+                  } catch (Exception e) {}
+              }
+
+              private void sendMessage() {
+                  try {
+                      String txt = input.getText().toString();
+                      socket.getOutputStream().write(txt.getBytes());
+                      logView.append("Moi: " + txt + "\n");
+                      input.setText("");
+                  } catch (Exception e) {}
+              }
+          }
+          EOF
+
+          # Resources
+          echo "<resources><string name='app_name'>BT Native Pro</string></resources>" > app/src/main/res/values/strings.xml
+
+      - name: Build with Gradle
+        run: |
+          gradle wrapper --gradle-version 8.7
+          chmod +x gradlew
+          ./gradlew assembleDebug
+          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/BT-PRO-MASTER.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: BT-PRO-MASTER, path: app/build/outputs/apk/debug/BT-PRO-MASTER.apk }
